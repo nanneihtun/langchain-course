@@ -1,41 +1,81 @@
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 
+# 1. .env ထဲက API keys / tracing settings ကို load လုပ်ပါ။
+# Clients မဖန်တီးခင် လုပ်ထားရမယ်။
 load_dotenv()
+
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
+from langchain_tavily import TavilySearch
+
+# 2. Agent ပြန်ပေးရမယ့် data ပုံစံ (schema) ကို သတ်မှတ်ပါ။
+# ဒီ classes တွေက search မလုပ်ပါ — answer နဲ့ sources ရဲ့ ပုံစံကို သတ်မှတ်တာပါ။
+class Source(BaseModel):
+    """Schema for a source used by the agent"""
+
+    url: str = Field(description="The URL of the source")
+
+
+class AgentResponse(BaseModel):
+    """Schema for agent response with answer and sources"""
+
+    answer: str = Field(description="The agent's answer to the query")
+    # list[Source] = Source objects ပါတဲ့ list။
+    # default_factory=list = sources မပေးထားရင် object တစ်ခုစီအတွက် empty list အသစ်ဖန်တီးမယ်။
+    sources: list[Source] = Field(
+        default_factory=list, description="List of sources used to generate the answer"
+    )
+
+
+# 3. Model နဲ့ tool objects ဖန်တီးပါ။ ဒီနေရာမှာ search မလုပ်သေးပါဘူး။
+llm = ChatOpenAI(model="gpt-5")
+# TavilySearch = class; TavilySearch() = အဲဒီ class ကနေ tool instance ဖန်တီးခြင်း။
+search_tool = TavilySearch()
+
+# 4. ဖန်တီးပြီးသား tool ကို agent အသုံးပြုနိုင်ဖို့ ပေးပါ။
+# search_tool နောက်မှာ () ထပ်မထည့်ပါ — ဒီမှာ tool ကို run ခိုင်းတာ မဟုတ်ပါဘူး။
+tools = [search_tool]
+# response_format က schema class ကို လက်ခံတာမို့ AgentResponse နောက်မှာ () မထည့်ပါ။
+# Agent က နောက်ဆုံးအဖြေကို ဒီ schema နဲ့ ကိုက်ညီအောင် ပြန်ပေးရမယ်။
+# Schema ကိုက်ညီခြင်းက job posting တကယ် active ဖြစ်ကြောင်း အာမခံတာတော့ မဟုတ်ပါ။
+agent = create_agent(
+    model=llm,
+    tools=tools,
+    response_format=AgentResponse,
+)
+
 
 def main():
     print("Hello from langchain-course!")
-    information ="""
-    Elon Reeve Musk (/ˈiːlɒn/ ⓘ EE-lon; born June 28, 1971) is a businessman and former public official who is the chief executive officer (CEO) and largest shareholder of Tesla and SpaceX. Musk has been the wealthiest person in the world since 2025, and briefly became the only trillionaire (in terms of US dollars) in June 2026; as of September 2026, Forbes estimates his net worth to be US$908 billion.
 
-Born into the wealthy Musk family in Pretoria, South Africa, Musk emigrated in 1989 to Canada; he has Canadian citizenship since his mother was born there. He received bachelor's degrees in 1997 from the University of Pennsylvania before moving to California to pursue business ventures. In 1995, Musk co-founded Zip2, a web software company. Following its sale in 1999, he co-founded X.com, an e-commerce payment system that merged with Confinity in March 2000 to form PayPal, which was acquired by eBay in 2002. Musk also became an American citizen in 2002.
+    # 5. User မေးခွန်းကို message object အဖြစ် ပြင်ဆင်ပါ။
+    question = HumanMessage(
+        content="search for 3 job postings for an ai engineer using langchain "
+        "in the bay area on linkedin and list their details"
+    )
 
-In 2002, Musk founded and became CEO and chief engineer of SpaceX, a space technology company; the company has since led innovations in reusable rockets and commercial spaceflight. Musk joined Tesla as an early investor in 2004 and became its CEO and product architect in 2008; it has since become a leader in electric vehicles. In 2015, Musk co-founded OpenAI to advance artificial intelligence (AI) research, but later left; his growing discontent with the organization's direction and leadership in the AI boom in the 2020s led him to establish xAI, which became a subsidiary of SpaceX in 2026. In 2022, he acquired Twitter, a social networking service, and made significant changes, including rebranding it as X in 2023. His other businesses include Neuralink, a neurotechnology company that he co-founded in 2016, and the Boring Company, a tunneling company that he founded in 2017. In November 2025, Tesla approved a pay package worth $1 trillion for Musk, which he is to receive over 10 years if certain milestones are met, such as achieving a market capitalization of $8.5 trillion. Musk became the first US-dollar trillionaire upon the initial public offering of SpaceX in June 2026, though a SpaceX stock collapse brought him under the threshold by the next month.
+    # 6. ဒီနေရာမှာ agent ကို အလုပ်စခိုင်းပါတယ်။
+    # LLM က tool/arguments ရွေး → runtime က tool run → result ကို LLM ဆီပြန်ပို့။
+    # LLM က tool ထပ်ခေါ်နိုင်သလို final response လည်း ပေးနိုင်ပါတယ်။
+    # "messages" က agent input key; list ထဲမှာ user message ထည့်ထားပါတယ်။
+    result = agent.invoke({"messages": [question]})
 
-Musk was the largest donor in the 2024 U.S. presidential election, where he supported Donald Trump. After Trump was inaugurated in January 2025, Musk was Senior Advisor to the President and the de facto head of the Department of Government Efficiency (DOGE). Musk left the Trump administration in May 2025 and returned to managing his companies; shortly thereafter he had a public feud with Trump.
+    # 7. result က dictionary ဖြစ်ပြီး အဓိက data နှစ်ခု ပါပါတယ်။
+    # result["messages"] = user/model/tool message history။
+    # result["structured_response"] = schema နဲ့ စစ်ဆေးပြီးသား AgentResponse object။
+    response = result["structured_response"]
 
-Musk is a supporter of global far-right politics, figures, and political parties. His political activities, statements and views have made him a polarizing figure. He has been criticized for making unscientific and misleading statements, including spreading COVID-19 misinformation, promoting conspiracy theories, and affirming antisemitic, white nationalist, racist, and transphobic comments. His acquisition of Twitter was controversial because, following his pledge to decrease censorship, there was an increase in hate speech and misinformation on the service. His role in the second Trump administration attracted public backlash, particularly in response to DOGE and its cuts to the US Agency for International Development (USAID).
-"""
+    # Dictionary key ကို ["..."] နဲ့ယူပြီး object ရဲ့ field ကို .answer / .sources နဲ့ယူပါ။
+    print(response.answer)
+    print("\nSources:")
+    for source in response.sources:
+        print(f"- {source.url}")
 
-    summary_template = """
-    given the information {information} about a person I want you to create:
-        1. A short summary
-        2. two interesting facts about them
-    """
+    # Debugging အတွက် history အပါအဝင် result အားလုံး မြင်ချင်ရင် ဒီလိုင်းကို ဖွင့်ပါ။
+    # print(result)
 
-    summary_prompt_template = PromptTemplate(
-            input_variables=["information"], template=summary_template
-        )
-
-    llm = ChatOpenAI(temperature=0, model="gpt-5")
-    #llm = ChatOllama(temperature=0, model="gemma3:270m")
-    
-    chain = summary_prompt_template | llm
-
-    response = chain.invoke(input={"information": information})
-    print(response.content)
 
 if __name__ == "__main__":
     main()
